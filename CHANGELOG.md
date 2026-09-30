@@ -1,5 +1,17 @@
 # Unreleased
 
+## Performance
+
+- **Preserve premium glass while reducing redundant shader work (ALBO-3181):**
+  Generate the native frost kernel's horizontal Gaussian weights by recurrence
+  (three exponentials instead of nine), keeping all samples, luminance weights,
+  and material settings. Wider kernels retain their original calculation.
+  Skip sharp refraction samples that are entirely overwritten by frost, while
+  preserving platform-view alpha; skip frost where the hairline is fully sharp.
+  Includes a headless shader pixel-comparison tool and an optional Metal
+  fragment-pass benchmark. See `docs/frost-shader-performance.md` for measured
+  scope and limitations.
+
 ## Features
 
 - **Native-parity material for `GlassQuality.premium`:** Additions to the premium pipeline,

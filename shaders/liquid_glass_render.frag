@@ -229,9 +229,33 @@ vec3 frostAt(vec2 p, vec2 q, vec2 invSize) {
     float stride = max(1.0, sigma / 1.8);
     float inv2s2 = 1.0 / (2.0 * sigma * sigma);
     float wx[9];
-    for (int i = 0; i < 9; i++) {
-        float dx = base.x + floor(float(i - 4) * stride + 0.5) + 0.5 - p.x;
-        wx[i] = exp(-dx * dx * inv2s2);
+    if (sigma <= 1.8) {
+        // ALBO-3181: unit-spaced columns at the native recipe's 0.6 pt
+        // blur (up to 3x DPR). Generate the SAME Gaussian weights by
+        // recurrence: successive g(x+1)/g(x) ratios differ by exp(-1/s^2).
+        // Three exponentials replace nine, with no extra samples or passes.
+        // Start at the centre so a small sigma cannot underflow the first
+        // weight and prevent the recurrence from recovering the peak.
+        float dx = base.x + 0.5 - p.x;
+        float stepWeight = exp(-inv2s2);
+        float phase = exp(-2.0 * dx * inv2s2);
+        float decay = stepWeight * stepWeight;
+        float xp = stepWeight * phase;
+        float xm = stepWeight / phase;
+        wx[4] = exp(-dx * dx * inv2s2);
+        for (int i = 1; i <= 4; i++) {
+            wx[4 + i] = wx[3 + i] * xp;
+            wx[4 - i] = wx[5 - i] * xm;
+            xp *= decay;
+            xm *= decay;
+        }
+    } else {
+        // Wider kernels round the stride to whole texels. Their spacing
+        // can be non-uniform, so retain the direct calculation there.
+        for (int i = 0; i < 9; i++) {
+            float dx = base.x + floor(float(i - 4) * stride + 0.5) + 0.5 - p.x;
+            wx[i] = exp(-dx * dx * inv2s2);
+        }
     }
     // Each texel also weighs by its luminance, white uFrost.w times as much
     // as black: below 1 dark detail dominates the ghost.
@@ -491,7 +515,12 @@ void main() {
     // a normal tilted < 0.6° from vertical — visually indistinguishable from a
     // zero-displacement sample at any display resolution.
     vec4 refractColor;
-    if (dot(normalXY, normalXY) < 1e-4) {
+    if (uFrost.x > 0.0 && hairline == 0.0 && uPlatformViewMode <= 0.5) {
+        // The frost below replaces all of this sample's RGB in the body.
+        // Its alpha is only consumed by platform-view passthrough. Skip the
+        // otherwise discarded bilinear reads (4, or 12 with dispersion).
+        refractColor = vec4(0.0, 0.0, 0.0, 1.0);
+    } else if (dot(normalXY, normalXY) < 1e-4) {
         // Flat interior — zero displacement, sample directly.
         refractColor = textureBilinear(screenUV, physTexSize, invTexSize);
     } else if (uChromaticAberration < 0.01) {
@@ -533,7 +562,7 @@ void main() {
         refractColor.rgb /= refractColor.a;
     }
 
-    if (uFrost.x > 0.0) {
+    if (uFrost.x > 0.0 && hairline < 1.0) {
         // The frosted, lensed body; the hairline keeps the sharp sample just
         // outside the shape that it was given above.
         vec2 p = fragCoord + uCaptureOffset + lensDisplacement;
